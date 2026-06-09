@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -14,7 +15,7 @@ from parser.filename import (
     resolve_placa_for_action,
     validate_placa,
 )
-from review.session import ReviewSession
+from review.session import ReviewDecision, ReviewSession, build_decisions, scan_image_files
 
 
 class AnalisadorApp:
@@ -25,8 +26,8 @@ class AnalisadorApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Analisador de Placas")
-        self.root.geometry("1200x760")
-        self.root.minsize(960, 640)
+        self.root.geometry("1280x760")
+        self.root.minsize(1180, 640)
 
         self.session = ReviewSession()
         self._current_pil_image: Image.Image | None = None
@@ -38,6 +39,7 @@ class AnalisadorApp:
         self._analysis_started = False
         self._source_folder: Path | None = None
         self._output_folder: Path | None = None
+        self._updating_list = False
 
         self._build_ui()
         self._refresh_view()
@@ -125,6 +127,44 @@ class AnalisadorApp:
         content = ttk.Frame(self.root, padding=8)
         content.pack(fill=tk.BOTH, expand=True)
         self.content_frame = content
+
+        list_frame = ttk.LabelFrame(content, text="Imagens", padding=8)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 8))
+        list_frame.pack_propagate(False)
+        list_frame.config(width=260)
+
+        list_container = ttk.Frame(list_frame)
+        list_container.pack(fill=tk.BOTH, expand=True)
+
+        self.image_tree = ttk.Treeview(
+            list_container,
+            columns=("num", "arquivo", "status"),
+            show="headings",
+            selectmode="browse",
+        )
+        self.image_tree.heading("num", text="#")
+        self.image_tree.heading("arquivo", text="Arquivo")
+        self.image_tree.heading("status", text="Status")
+        
+        self.image_tree.column("num", width=40, anchor=tk.CENTER)
+        self.image_tree.column("arquivo", width=120)
+        self.image_tree.column("status", width=80)
+
+        self.image_tree.tag_configure("current", background="#e6f3ff")
+        self.image_tree.tag_configure("certo", foreground="#16a34a")
+        self.image_tree.tag_configure("falha", foreground="#dc2626")
+        self.image_tree.tag_configure("obstruida", foreground="#ea580c")
+        self.image_tree.tag_configure("pulado", foreground="#64748b")
+        self.image_tree.tag_configure("invalido", foreground="#ef4444")
+        self.image_tree.tag_configure("pendente", foreground="#475569")
+
+        tree_scroll = ttk.Scrollbar(list_container, orient=tk.VERTICAL, command=self.image_tree.yview)
+        self.image_tree.configure(yscrollcommand=tree_scroll.set)
+        
+        self.image_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.image_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
         self.image_frame = ttk.LabelFrame(content, text="Imagem", padding=8)
         self.image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -334,25 +374,103 @@ class AnalisadorApp:
             )
             return
 
-        total, invalid = self.session.load_folder(
-            self._source_folder,
-            self._output_folder,
+        self.start_button.config(state=tk.DISABLED)
+
+        modal = tk.Toplevel(self.root)
+        modal.title("Carregando")
+        modal.geometry("400x120")
+        modal.resizable(False, False)
+        modal.transient(self.root)
+        modal.grab_set()
+
+        center_x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        center_y = self.root.winfo_y() + (self.root.winfo_height() - 120) // 2
+        modal.geometry(f"+{center_x}+{center_y}")
+
+        ttk.Label(modal, text="Carregando imagens...", font=("Segoe UI", 11)).pack(pady=(20, 10))
+        
+        progress = ttk.Progressbar(modal, length=350, mode="determinate")
+        progress.pack(pady=10)
+        
+        progress_label = ttk.Label(modal, text="0 / 0")
+        progress_label.pack()
+
+        def load_thread():
+            try:
+                files = scan_image_files(self._source_folder)
+                
+                if len(files) == 0:
+                    self.root.after(0, lambda: self._on_load_empty(modal))
+                    return
+
+                decisions = []
+                invalid_count = 0
+                
+                for i, filepath in enumerate(files):
+                    parsed = parse_input_filename(filepath.name)
+                    if not parsed.valid:
+                        invalid_count += 1
+                    
+                    decisions.append(
+                        ReviewDecision(
+                            filepath=filepath,
+                            parsed=parsed,
+                        )
+                    )
+                    
+                    if (i + 1) % 10 == 0 or i == len(files) - 1:
+                        current = i + 1
+                        total = len(files)
+                        self.root.after(0, lambda c=current, t=total: self._update_progress(
+                            progress, progress_label, c, t
+                        ))
+                
+                self.root.after(0, lambda: self._on_load_complete(
+                    modal, decisions, invalid_count
+                ))
+                
+            except Exception as e:
+                self.root.after(0, lambda: self._on_load_error(modal, str(e)))
+
+        thread = threading.Thread(target=load_thread, daemon=True)
+        thread.start()
+
+    def _update_progress(self, progress, label, current, total):
+        progress["maximum"] = total
+        progress["value"] = current
+        label.config(text=f"{current} / {total}")
+
+    def _on_load_empty(self, modal):
+        modal.destroy()
+        messagebox.showinfo(
+            "Pasta vazia",
+            "Nenhuma imagem JPG encontrada na pasta de origem ou subpastas.",
         )
-        if total == 0:
-            messagebox.showinfo(
-                "Pasta vazia",
-                "Nenhuma imagem JPG encontrada na pasta de origem ou subpastas.",
-            )
-            return
+        self._update_start_button()
+
+    def _on_load_error(self, modal, error):
+        modal.destroy()
+        messagebox.showerror("Erro ao carregar", f"Erro durante o carregamento: {error}")
+        self._update_start_button()
+
+    def _on_load_complete(self, modal, decisions, invalid_count):
+        modal.destroy()
+        
+        self.session.source_folder = self._source_folder
+        self.session.output_folder = self._output_folder
+        self.session.decisions = decisions
+        self.session.current_index = 0
+        self.session.processed_paths.clear()
+        self.session.process_errors.clear()
 
         self._analysis_started = True
         self.start_button.config(state=tk.DISABLED)
         self._set_review_enabled(True)
 
-        if invalid:
+        if invalid_count:
             messagebox.showwarning(
                 "Arquivos inválidos",
-                f"{invalid} arquivo(s) com nome inválido podem ser pulados.",
+                f"{invalid_count} arquivo(s) com nome inválido podem ser pulados.",
             )
 
         self._clear_manual_entry()
@@ -360,6 +478,73 @@ class AnalisadorApp:
 
     def _clear_manual_entry(self) -> None:
         self.manual_entry.delete(0, tk.END)
+
+    def _get_status_text(self, decision) -> tuple[str, str]:
+        if not decision.parsed.valid:
+            return "Inválido", "invalido"
+        if decision.skipped:
+            return "Pulado", "pulado"
+        if decision.action == Action.CERTA:
+            if decision.veiculo_especial:
+                return "Certo (VE)", "certo"
+            return "Certo", "certo"
+        if decision.action == Action.ERRADA:
+            if decision.veiculo_especial:
+                return "Falha (VE)", "falha"
+            return "Falha técnica", "falha"
+        if decision.action == Action.OBSTRUCAO:
+            return "Obstruída", "obstruida"
+        return "Pendente", "pendente"
+
+    def _refresh_image_list(self) -> None:
+        if self._updating_list:
+            return
+        
+        self._updating_list = True
+        
+        for item in self.image_tree.get_children():
+            self.image_tree.delete(item)
+        
+        for i, decision in enumerate(self.session.decisions):
+            status_text, status_tag = self._get_status_text(decision)
+            filename = decision.filepath.name
+            if len(filename) > 30:
+                filename = filename[:27] + "..."
+            
+            tags = [status_tag]
+            if i == self.session.current_index:
+                tags.append("current")
+            
+            self.image_tree.insert(
+                "",
+                "end",
+                iid=str(i),
+                values=(str(i + 1), filename, status_text),
+                tags=tags,
+            )
+        
+        if self.session.current_index >= 0 and self.session.current_index < len(self.session.decisions):
+            current_iid = str(self.session.current_index)
+            self.image_tree.selection_set(current_iid)
+            self.image_tree.see(current_iid)
+        
+        self._updating_list = False
+
+    def _on_tree_select(self, event) -> None:
+        if self._updating_list or not self._analysis_started:
+            return
+        
+        selection = self.image_tree.selection()
+        if not selection:
+            return
+        
+        try:
+            index = int(selection[0])
+            if index != self.session.current_index:
+                self.session.go_to(index)
+                self._refresh_view()
+        except (ValueError, IndexError):
+            pass
 
     def _set_review_enabled(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
@@ -383,8 +568,9 @@ class AnalisadorApp:
         current = self.session.current
         total = self.session.total
         decided = self.session.decided_count
+        current_pos = self.session.current_index + 1 if total > 0 else 0
 
-        self.progress_label.config(text=f"{decided} / {total}")
+        self.progress_label.config(text=f"Imagem {current_pos} / {total} · {decided} classificadas")
         self.progress_bar.config(maximum=max(total, 1), value=decided)
 
         self.prev_button.config(
@@ -469,6 +655,8 @@ class AnalisadorApp:
                 self.manual_entry.insert(0, current.placa_final)
         elif not current.action:
             self._clear_manual_entry()
+
+        self._refresh_image_list()
 
     def _preview_placa_for_certo(self, current) -> str | None:
         manual = self.manual_entry.get().strip()

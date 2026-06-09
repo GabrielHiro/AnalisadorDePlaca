@@ -9,6 +9,32 @@ from parser.filename import Action, ParsedImage, parse_input_filename
 IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
 
 
+def scan_image_files(folder: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in folder.rglob("*")
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+def build_decisions(files: list[Path]) -> tuple[list[ReviewDecision], int]:
+    decisions: list[ReviewDecision] = []
+    invalid_count = 0
+    
+    for filepath in files:
+        parsed = parse_input_filename(filepath.name)
+        if not parsed.valid:
+            invalid_count += 1
+        decisions.append(
+            ReviewDecision(
+                filepath=filepath,
+                parsed=parsed,
+            )
+        )
+    
+    return decisions, invalid_count
+
+
 @dataclass
 class ReviewDecision:
     filepath: Path
@@ -41,23 +67,8 @@ class ReviewSession:
         self.processed_paths.clear()
         self.process_errors.clear()
 
-        files = sorted(
-            path
-            for path in folder.rglob("*")
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-        )
-
-        invalid_count = 0
-        for filepath in files:
-            parsed = parse_input_filename(filepath.name)
-            if not parsed.valid:
-                invalid_count += 1
-            self.decisions.append(
-                ReviewDecision(
-                    filepath=filepath,
-                    parsed=parsed,
-                )
-            )
+        files = scan_image_files(folder)
+        self.decisions, invalid_count = build_decisions(files)
 
         return len(files), invalid_count
 
@@ -88,6 +99,12 @@ class ReviewSession:
         if self.current_index > 0:
             self.current_index -= 1
         return self.current
+
+    def go_to(self, index: int) -> ReviewDecision | None:
+        if 0 <= index < len(self.decisions):
+            self.current_index = index
+            return self.current
+        return None
 
     def set_decision(
         self,
