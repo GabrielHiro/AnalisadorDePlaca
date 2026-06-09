@@ -29,20 +29,6 @@ class AnalysisSummary:
     falhas_obstrucao: int
 
 
-def unique_destination(path: Path) -> Path:
-    if not path.exists():
-        return path
-
-    stem = path.stem
-    suffix = path.suffix
-    counter = 2
-    while True:
-        candidate = path.with_name(f"{stem}_{counter}{suffix}")
-        if not candidate.exists():
-            return candidate
-        counter += 1
-
-
 def build_target_path(
     output_root: Path,
     decision: ReviewDecision,
@@ -54,7 +40,14 @@ def build_target_path(
     corrected = is_placa_corrected(
         parsed, decision.action, decision.placa_final
     )
-    category_parts = resolve_destination(decision.action, corrected=corrected)
+    veiculo_especial = (
+        decision.veiculo_especial and decision.action != Action.OBSTRUCAO
+    )
+    category_parts = resolve_destination(
+        decision.action,
+        corrected=corrected,
+        veiculo_especial=veiculo_especial,
+    )
     filename = build_output_filename(parsed, decision.placa_final)
     return (
         output_root
@@ -81,8 +74,15 @@ def organize_single(
         ):
             return decision.output_path, None
 
+        old_path = decision.output_path
+        if (
+            old_path is not None
+            and old_path != target
+            and old_path.exists()
+        ):
+            old_path.unlink()
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        target = unique_destination(target)
         shutil.copy2(str(decision.filepath), str(target))
         decision.output_path = target
         return target, None

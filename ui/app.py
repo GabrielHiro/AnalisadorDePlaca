@@ -43,7 +43,7 @@ class AnalisadorApp:
         self._refresh_view()
 
     def _build_ui(self) -> None:
-        setup_frame = ttk.LabelFrame(self.root, text="Configuracao inicial", padding=8)
+        setup_frame = ttk.LabelFrame(self.root, text="Configuração inicial", padding=8)
         setup_frame.pack(fill=tk.X, padx=8, pady=(8, 0))
 
         source_row = ttk.Frame(setup_frame)
@@ -51,7 +51,7 @@ class AnalisadorApp:
         ttk.Label(source_row, text="Pasta de origem:", width=16).pack(side=tk.LEFT)
         self.source_folder_label = ttk.Label(
             source_row,
-            text="Nao selecionada",
+            text="Não selecionada",
             foreground="#555",
         )
         self.source_folder_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -63,16 +63,16 @@ class AnalisadorApp:
 
         output_row = ttk.Frame(setup_frame)
         output_row.pack(fill=tk.X, pady=2)
-        ttk.Label(output_row, text="Pasta de saida:", width=16).pack(side=tk.LEFT)
+        ttk.Label(output_row, text="Pasta de saída:", width=16).pack(side=tk.LEFT)
         self.output_folder_label = ttk.Label(
             output_row,
-            text="Nao selecionada",
+            text="Não selecionada",
             foreground="#555",
         )
         self.output_folder_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(
             output_row,
-            text="Escolher saida",
+            text="Escolher saída",
             command=self._choose_output_folder,
         ).pack(side=tk.RIGHT)
 
@@ -80,14 +80,14 @@ class AnalisadorApp:
         action_row.pack(fill=tk.X, pady=(8, 0))
         self.start_button = ttk.Button(
             action_row,
-            text="Iniciar analise",
+            text="Iniciar análise",
             command=self._start_analysis,
             state=tk.DISABLED,
         )
         self.start_button.pack(side=tk.LEFT)
         ttk.Label(
             action_row,
-            text="Escolha origem e saida antes de revisar as imagens.",
+            text="Escolha origem e saída antes de revisar as imagens.",
             foreground="#555",
         ).pack(side=tk.LEFT, padx=12)
 
@@ -116,7 +116,7 @@ class AnalisadorApp:
 
         self.finish_button = ttk.Button(
             toolbar,
-            text="Gerar relatorio",
+            text="Gerar relatório",
             command=self._finish_batch,
             state=tk.DISABLED,
         )
@@ -145,7 +145,7 @@ class AnalisadorApp:
         side.pack(side=tk.RIGHT, fill=tk.Y)
         side.pack_propagate(False)
 
-        actions_frame = ttk.LabelFrame(side, text="Acoes", padding=8)
+        actions_frame = ttk.LabelFrame(side, text="Ações", padding=8)
         actions_frame.pack(fill=tk.X, side=tk.TOP)
 
         self.certa_button = ttk.Button(
@@ -157,14 +157,22 @@ class AnalisadorApp:
 
         self.errada_button = ttk.Button(
             actions_frame,
-            text="Falha tecnica",
+            text="Falha técnica",
             command=lambda: self._apply_action(Action.ERRADA),
         )
         self.errada_button.pack(fill=tk.X, pady=2)
 
+        self.veiculo_especial_var = tk.BooleanVar(value=False)
+        self.veiculo_especial_check = ttk.Checkbutton(
+            actions_frame,
+            text="Veículo especial",
+            variable=self.veiculo_especial_var,
+        )
+        self.veiculo_especial_check.pack(fill=tk.X, pady=2)
+
         self.obstrucao_button = ttk.Button(
             actions_frame,
-            text="Obstrucao - 000000",
+            text="Obstrução",
             command=lambda: self._apply_action(Action.OBSTRUCAO),
         )
         self.obstrucao_button.pack(fill=tk.X, pady=2)
@@ -178,7 +186,7 @@ class AnalisadorApp:
 
         ttk.Label(
             manual_frame,
-            text="Preencha se corrigiu a placa. Vazio = ja veio certa.",
+            text="Preencha se corrigiu a placa. Vazio = já veio certa.",
             wraplength=280,
             foreground="#555",
         ).pack(anchor=tk.W, pady=(0, 4))
@@ -200,7 +208,7 @@ class AnalisadorApp:
 
         self.next_button = ttk.Button(
             nav_frame,
-            text="Proxima",
+            text="Próxima",
             command=self._go_next,
             state=tk.DISABLED,
         )
@@ -208,7 +216,7 @@ class AnalisadorApp:
 
         self.skip_button = ttk.Button(
             side,
-            text="Pular arquivo invalido",
+            text="Pular arquivo inválido",
             command=self._skip_current,
         )
         self.skip_button.pack(fill=tk.X, side=tk.TOP, pady=(8, 0))
@@ -257,11 +265,11 @@ class AnalisadorApp:
             ("equipamento", "Equipamento"),
             ("faixa", "Faixa"),
             ("sentido", "Sentido"),
-            ("periodo", "Periodo"),
-            ("horario", "Horario"),
+            ("periodo", "Período"),
+            ("horario", "Horário"),
             ("placa", "Placa detectada"),
-            ("nome_saida", "Nome de saida"),
-            ("decisao", "Decisao atual"),
+            ("nome_saida", "Nome de saída"),
+            ("decisao", "Decisão atual"),
         ]:
             row = ttk.Frame(meta_frame)
             row.pack(fill=tk.X, pady=2)
@@ -300,7 +308,7 @@ class AnalisadorApp:
 
         initial = str(self._source_folder) if self._source_folder else None
         folder = filedialog.askdirectory(
-            title="Selecionar pasta de saida",
+            title="Selecionar pasta de saída",
             initialdir=initial,
         )
         if not folder:
@@ -321,8 +329,8 @@ class AnalisadorApp:
     def _start_analysis(self) -> None:
         if self._source_folder is None or self._output_folder is None:
             messagebox.showwarning(
-                "Configuracao incompleta",
-                "Selecione a pasta de origem e a pasta de saida.",
+                "Configuração incompleta",
+                "Selecione a pasta de origem e a pasta de saída.",
             )
             return
 
@@ -343,8 +351,8 @@ class AnalisadorApp:
 
         if invalid:
             messagebox.showwarning(
-                "Arquivos invalidos",
-                f"{invalid} arquivo(s) com nome invalido podem ser pulados.",
+                "Arquivos inválidos",
+                f"{invalid} arquivo(s) com nome inválido podem ser pulados.",
             )
 
         self._clear_manual_entry()
@@ -358,6 +366,7 @@ class AnalisadorApp:
         for widget in (
             self.certa_button,
             self.errada_button,
+            self.veiculo_especial_check,
             self.obstrucao_button,
             self.manual_entry,
             self.prev_button,
@@ -393,7 +402,7 @@ class AnalisadorApp:
                 label.config(text="-")
             if not self._analysis_started:
                 self.warning_label.config(
-                    text="Configure origem e saida, depois clique em Iniciar analise."
+                    text="Configure origem e saída, depois clique em Iniciar análise."
                 )
             else:
                 self.warning_label.config(text="")
@@ -418,8 +427,15 @@ class AnalisadorApp:
                 Action.OBSTRUCAO: "obstruida",
             }
             decisao = action_labels.get(current.action, current.action.value)
+            if current.veiculo_especial:
+                decisao += " (veiculo especial)"
             if current.placa_final:
                 decisao += f" -> {current.placa_final}"
+
+        if current.action:
+            self.veiculo_especial_var.set(current.veiculo_especial)
+        else:
+            self.veiculo_especial_var.set(False)
 
         self.meta_labels["arquivo"].config(text=current.filepath.name)
         self.meta_labels["equipamento"].config(text=parsed.n_serie or "-")
@@ -487,6 +503,7 @@ class AnalisadorApp:
             state = tk.DISABLED
         self.certa_button.config(state=state)
         self.errada_button.config(state=state)
+        self.veiculo_especial_check.config(state=state)
         self.obstrucao_button.config(state=state)
         self.manual_entry.config(state=state)
 
@@ -640,8 +657,18 @@ class AnalisadorApp:
 
         self._finalize_decision(action, placa_final)
 
+    def _veiculo_especial_for_action(self, action: Action) -> bool:
+        if action == Action.OBSTRUCAO:
+            return False
+        return self.veiculo_especial_var.get()
+
     def _finalize_decision(self, action: Action, placa_final: str) -> None:
-        self.session.set_decision(action, placa_final)
+        veiculo_especial = self._veiculo_especial_for_action(action)
+        self.session.set_decision(
+            action,
+            placa_final,
+            veiculo_especial=veiculo_especial,
+        )
         self._clear_manual_entry()
         self._process_current_decision(action, placa_final)
 
@@ -659,6 +686,7 @@ class AnalisadorApp:
         if error or target is None:
             current.action = None
             current.placa_final = None
+            current.veiculo_especial = False
             messagebox.showerror(
                 "Erro ao copiar",
                 error or "Nao foi possivel copiar a imagem.",
@@ -668,9 +696,14 @@ class AnalisadorApp:
             )
             return
 
-        entry = (current.parsed.source_name, str(target))
-        if entry not in self.session.processed_paths:
-            self.session.processed_paths.append(entry)
+        self.session.processed_paths = [
+            entry
+            for entry in self.session.processed_paths
+            if entry[0] != current.parsed.source_name
+        ]
+        self.session.processed_paths.append(
+            (current.parsed.source_name, str(target))
+        )
 
     def _skip_current(self) -> None:
         current = self.session.current

@@ -16,6 +16,7 @@ class ReviewDecision:
     action: Action | None = None
     placa_final: str | None = None
     skipped: bool = False
+    veiculo_especial: bool = False
     output_path: Path | None = None
 
     @property
@@ -92,12 +93,15 @@ class ReviewSession:
         self,
         action: Action,
         placa_final: str,
+        *,
+        veiculo_especial: bool = False,
     ) -> None:
         item = self.current
         if item is None:
             return
         item.action = action
         item.placa_final = placa_final
+        item.veiculo_especial = veiculo_especial
         item.skipped = False
 
     def skip_current(self) -> None:
@@ -106,6 +110,7 @@ class ReviewSession:
             return
         item.action = None
         item.placa_final = None
+        item.veiculo_especial = False
         item.skipped = True
 
     def get_reviewable(self) -> list[ReviewDecision]:

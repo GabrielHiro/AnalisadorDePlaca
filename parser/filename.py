@@ -20,8 +20,6 @@ SLICES = {
     "horario_length": 6,
 }
 
-OUTPUT_SENTIDO_LABEL = "SENTIDO"
-
 SENTIDO_PATTERN = re.compile(r"(Leste|Oeste|Norte|Sul)", re.IGNORECASE)
 PLACA_PATTERN = re.compile(r"^[A-Z0-9]{6,7}$")
 PLACA_PREFIX_PATTERN = re.compile(r"^[A-Z]{3}[0-9]")
@@ -210,7 +208,7 @@ def build_output_filename(parsed: ParsedImage, placa_final: str) -> str:
     parts = [
         parsed.n_serie,
         parsed.faixa,
-        OUTPUT_SENTIDO_LABEL,
+        parsed.sentido.upper(),
         parsed.periodo,
         parsed.horario,
         placa_final.upper(),
@@ -226,11 +224,20 @@ def is_placa_corrected(
     return placa_final.upper() != parsed.placa_detectada.upper()
 
 
-def resolve_destination(action: Action, *, corrected: bool = False) -> list[str]:
+def resolve_destination(
+    action: Action,
+    *,
+    corrected: bool = False,
+    veiculo_especial: bool = False,
+) -> list[str]:
     if action == Action.OBSTRUCAO:
         return ["obstruida"]
     if action == Action.ERRADA:
-        return ["falha_tecnica"]
-    if corrected:
-        return ["certo", "imagens_corrigidas"]
-    return ["certo"]
+        parts = ["falha_tecnica"]
+    elif corrected:
+        parts = ["certo", "imagens_corrigidas"]
+    else:
+        parts = ["certo"]
+    if veiculo_especial:
+        parts.append("veiculos_especiais")
+    return parts
