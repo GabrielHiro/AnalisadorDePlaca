@@ -11,6 +11,7 @@ from organizer.folders import build_analysis_summary, organize_single, write_rep
 from parser.filename import (
     Action,
     build_output_filename,
+    format_horario_display,
     parse_input_filename,
     resolve_placa_for_action,
     validate_placa,
@@ -202,6 +203,13 @@ class AnalisadorApp:
         )
         self.errada_button.pack(fill=tk.X, pady=2)
 
+        self.obstrucao_button = ttk.Button(
+            actions_frame,
+            text="Obstrução",
+            command=lambda: self._apply_action(Action.OBSTRUCAO),
+        )
+        self.obstrucao_button.pack(fill=tk.X, pady=2)
+
         self.veiculo_especial_var = tk.BooleanVar(value=False)
         self.veiculo_especial_check = ttk.Checkbutton(
             actions_frame,
@@ -209,13 +217,6 @@ class AnalisadorApp:
             variable=self.veiculo_especial_var,
         )
         self.veiculo_especial_check.pack(fill=tk.X, pady=2)
-
-        self.obstrucao_button = ttk.Button(
-            actions_frame,
-            text="Obstrução",
-            command=lambda: self._apply_action(Action.OBSTRUCAO),
-        )
-        self.obstrucao_button.pack(fill=tk.X, pady=2)
 
         manual_frame = ttk.LabelFrame(
             actions_frame,
@@ -403,27 +404,36 @@ class AnalisadorApp:
                     self.root.after(0, lambda: self._on_load_empty(modal))
                     return
 
+                total = len(files)
+                self.root.after(
+                    0,
+                    lambda t=total: self._update_progress(
+                        progress, progress_label, 0, t
+                    ),
+                )
+
                 decisions = []
                 invalid_count = 0
-                
+
                 for i, filepath in enumerate(files):
                     parsed = parse_input_filename(filepath.name)
                     if not parsed.valid:
                         invalid_count += 1
-                    
+
                     decisions.append(
                         ReviewDecision(
                             filepath=filepath,
                             parsed=parsed,
                         )
                     )
-                    
-                    if (i + 1) % 10 == 0 or i == len(files) - 1:
-                        current = i + 1
-                        total = len(files)
-                        self.root.after(0, lambda c=current, t=total: self._update_progress(
+
+                    current = i + 1
+                    self.root.after(
+                        0,
+                        lambda c=current, t=total: self._update_progress(
                             progress, progress_label, c, t
-                        ))
+                        ),
+                    )
                 
                 self.root.after(0, lambda: self._on_load_complete(
                     modal, decisions, invalid_count
@@ -628,7 +638,9 @@ class AnalisadorApp:
         self.meta_labels["faixa"].config(text=parsed.faixa or "-")
         self.meta_labels["sentido"].config(text=parsed.sentido or "-")
         self.meta_labels["periodo"].config(text=periodo_label)
-        self.meta_labels["horario"].config(text=parsed.horario or "-")
+        self.meta_labels["horario"].config(
+            text=format_horario_display(parsed.horario) if parsed.horario else "-"
+        )
         self.meta_labels["placa"].config(text=parsed.placa_detectada or "-")
         self.meta_labels["nome_saida"].config(
             text=self._current_output_name(current) or "-"

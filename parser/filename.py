@@ -18,12 +18,12 @@ SLICES = {
     "min_len": 64,
     "horario_offset_after_sentido": 9,
     "horario_length": 6,
+    "metadata_after_horario_length": 15,
 }
 
 SENTIDO_PATTERN = re.compile(r"(Leste|Oeste|Norte|Sul)", re.IGNORECASE)
 PLACA_PATTERN = re.compile(r"^[A-Z0-9]{6,7}$")
 PLACA_PREFIX_PATTERN = re.compile(r"^[A-Z]{3}[0-9]")
-MIN_PLACA_PADDING_ZEROS = 6
 PLACA_LENGTH = 7
 OBSTRUCAO_PLACA = "000000"
 
@@ -59,28 +59,29 @@ def extract_horario(stem: str, sentido_end: int) -> str:
     return stem[start:end]
 
 
-def extract_placa(stem: str) -> str:
-    trailing_zeros = len(stem) - len(stem.rstrip("0"))
-    if trailing_zeros < MIN_PLACA_PADDING_ZEROS:
+def extract_placa(stem: str, sentido_end: int) -> str:
+    start = (
+        sentido_end
+        + SLICES["horario_offset_after_sentido"]
+        + SLICES["horario_length"]
+        + SLICES["metadata_after_horario_length"]
+    )
+    end = start + PLACA_LENGTH
+    if end > len(stem):
         return ""
 
-    candidates: list[str] = []
-    standard = stem[-(trailing_zeros + PLACA_LENGTH) : -trailing_zeros]
-    if len(standard) == PLACA_LENGTH:
-        candidates.append(standard)
+    plate = stem[start:end]
+    if not plate:
+        return ""
 
-    if trailing_zeros >= 7:
-        with_shared_zero = stem[-(trailing_zeros + PLACA_LENGTH - 1) : -(trailing_zeros - 1)]
-        if len(with_shared_zero) == PLACA_LENGTH:
-            candidates.append(with_shared_zero)
+    if set(plate) == {"0"}:
+        return OBSTRUCAO_PLACA
 
-    for candidate in candidates:
-        if PLACA_PREFIX_PATTERN.match(candidate):
-            return candidate
+    if PLACA_PREFIX_PATTERN.match(plate):
+        return plate
 
-    for candidate in candidates:
-        if PLACA_PATTERN.match(candidate):
-            return candidate
+    if PLACA_PATTERN.match(plate):
+        return plate
 
     return ""
 
@@ -90,6 +91,12 @@ def extract_sentido(stem: str) -> str:
     if match:
         return match.group(1).capitalize()
     return "DESCONHECIDO"
+
+
+def format_horario_display(horario: str) -> str:
+    if len(horario) == 6 and horario.isdigit():
+        return f"{horario[:2]}:{horario[2:4]}:{horario[4:6]}"
+    return horario
 
 
 def derive_periodo(horario: str) -> tuple[str, str]:
@@ -139,7 +146,7 @@ def parse_input_filename(filename: str) -> ParsedImage:
 
     sentido = sentido_match.group(1).capitalize()
     horario = extract_horario(stem, sentido_match.end())
-    placa = extract_placa(stem).upper()
+    placa = extract_placa(stem, sentido_match.end()).upper()
     if not horario or not placa:
         return ParsedImage(
             source_name=filename,
