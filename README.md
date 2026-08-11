@@ -37,6 +37,37 @@ python main.py
 
 6. Clique em **Gerar relatorio** a qualquer momento para salvar o CSV com o resumo do que ja foi classificado (nao e necessario terminar o lote).
 
+## Novas Funcionalidades ⚡
+
+### Atalhos de Teclado
+- **C** ou **Enter**: Marcar como Certo
+- **F**: Marcar como Falha
+- **O**: Marcar como Obstrução  
+- **S**: Pular imagem
+- **V**: Alternar Veículo Especial
+- **← →**: Navegar entre imagens
+- **1-9**: Selecionar classificação
+- **Ctrl+Z**: Desfazer última decisão
+- **Ctrl+Y**: Refazer decisão desfeita
+- **Ctrl+S**: Salvar sessão manualmente
+
+### Auto-Save de Sessão
+- Salvamento automático a cada 5 decisões
+- Arquivo `.session.json` na pasta de saída
+- Recuperação automática ao reiniciar análise
+
+### Estatísticas em Tempo Real
+- Contadores de decisões (✓ Certas, ✗ Falhas, ⊘ Obstruções)
+- Tempo médio por imagem
+- Estimativa de tempo restante (ETA)
+
+### Overlay Personalizável
+- Exibição da placa e classificação sobre a imagem
+- Tamanho de fonte e opacidade ajustáveis
+- Posição arrastável com o mouse
+
+📖 Veja [NOVAS_FUNCIONALIDADES.md](NOVAS_FUNCIONALIDADES.md) para detalhes completos.
+
 ## Formato do nome de entrada
 
 Exemplo:

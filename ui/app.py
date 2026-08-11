@@ -78,7 +78,6 @@ class AnalisadorApp:
         self._build_ui()
         self._setup_keyboard_shortcuts()
         self._refresh_view()
-        self._try_load_session()
 
     def _build_ui(self) -> None:
         setup_frame = ttk.LabelFrame(self.root, text="Configuração inicial", padding=8)
@@ -471,6 +470,215 @@ class AnalisadorApp:
         )
         self.start_button.config(state=tk.NORMAL if ready else tk.DISABLED)
 
+    def _setup_keyboard_shortcuts(self) -> None:
+        self.root.bind("<Return>", lambda e: self._apply_certo() if self._analysis_started else None)
+        self.root.bind("c", lambda e: self._apply_certo() if self._analysis_started else None)
+        self.root.bind("C", lambda e: self._apply_certo() if self._analysis_started else None)
+        self.root.bind("f", lambda e: self._apply_action(Action.ERRADA) if self._analysis_started else None)
+        self.root.bind("F", lambda e: self._apply_action(Action.ERRADA) if self._analysis_started else None)
+        self.root.bind("o", lambda e: self._apply_action(Action.OBSTRUCAO) if self._analysis_started else None)
+        self.root.bind("O", lambda e: self._apply_action(Action.OBSTRUCAO) if self._analysis_started else None)
+        self.root.bind("s", lambda e: self._skip_current() if self._analysis_started else None)
+        self.root.bind("S", lambda e: self._skip_current() if self._analysis_started else None)
+        self.root.bind("v", lambda e: self._toggle_veiculo_especial() if self._analysis_started else None)
+        self.root.bind("V", lambda e: self._toggle_veiculo_especial() if self._analysis_started else None)
+        self.root.bind("<Left>", lambda e: self._go_previous() if self._analysis_started else None)
+        self.root.bind("<Right>", lambda e: self._go_next() if self._analysis_started else None)
+        self.root.bind("<Control-z>", lambda e: self._undo() if self._analysis_started else None)
+        self.root.bind("<Control-y>", lambda e: self._redo() if self._analysis_started else None)
+        self.root.bind("<Control-s>", lambda e: self._save_session() if self._analysis_started else None)
+        
+        for i in range(1, 10):
+            self.root.bind(str(i), lambda e, idx=i-1: self._select_classificacao_by_index(idx) if self._analysis_started else None)
+
+    def _toggle_veiculo_especial(self) -> None:
+        current_value = self.veiculo_especial_var.get()
+        self.veiculo_especial_var.set(not current_value)
+
+    def _select_classificacao_by_index(self, index: int) -> None:
+        values = self.classificacao_combo["values"]
+        if 0 <= index < len(values):
+            self.classificacao_combo.set(values[index])
+            self._update_output_preview()
+
+    def _get_session_file(self) -> Path | None:
+        if self._output_folder is None:
+            return None
+        return self._output_folder / ".session.json"
+
+    def _try_load_session(self) -> None:
+        if not self._analysis_started:
+            return
+        
+        session_file = self._get_session_file()
+        if session_file is None or not session_file.exists():
+            return
+        
+        try:
+            with open(session_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            if messagebox.askyesno("Sessão Anterior", "Foi encontrada uma sessão salva. Deseja retomar?"):
+                self._load_session_data(data)
+        except Exception:
+            pass
+
+    def _load_session_data(self, data: dict) -> None:
+        try:
+            self.session.current_index = data.get("current_index", 0)
+            decisions_data = data.get("decisions", [])
+            
+            for i, dec_data in enumerate(decisions_data):
+                if i >= len(self.session.decisions):
+                    break
+                
+                decision = self.session.decisions[i]
+                if dec_data.get("action"):
+                    decision.action = Action(dec_data["action"])
+                decision.placa_final = dec_data.get("placa_final")
+                decision.skipped = dec_data.get("skipped", False)
+                decision.veiculo_especial = dec_data.get("veiculo_especial", False)
+                decision.classificacao = dec_data.get("classificacao")
+            
+            self._refresh_view()
+        except Exception:
+            pass
+
+    def _save_session(self) -> None:
+        session_file = self._get_session_file()
+        if session_file is None:
+            return
+        
+        try:
+            data = {
+                "current_index": self.session.current_index,
+                "timestamp": time.time(),
+                "decisions": [
+                    {
+                        "filepath": str(d.filepath),
+                        "action": d.action.value if d.action else None,
+                        "placa_final": d.placa_final,
+                        "skipped": d.skipped,
+                        "veiculo_especial": d.veiculo_especial,
+                        "classificacao": d.classificacao,
+                    }
+                    for d in self.session.decisions
+                ],
+            }
+            
+            with open(session_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            
+            self._last_save_time = time.time()
+        except Exception:
+            pass
+
+    def _auto_save_if_needed(self) -> None:
+        self._auto_save_counter += 1
+        current_time = time.time()
+        
+        if self._auto_save_counter >= 5 or (current_time - self._last_save_time) > 120:
+            self._save_session()
+            self._auto_save_counter = 0
+
+    def _save_state_for_undo(self) -> None:
+        if len(self._undo_stack) >= 50:
+            self._undo_stack.pop(0)
+        
+        current = self.session.current
+        if current is None:
+            return
+        
+        state = {
+            "index": self.session.current_index,
+            "action": current.action,
+            "placa_final": current.placa_final,
+            "skipped": current.skipped,
+            "veiculo_especial": current.veiculo_especial,
+            "classificacao": current.classificacao,
+        }
+        self._undo_stack.append(state)
+        self._redo_stack.clear()
+
+    def _undo(self) -> None:
+        if not self._undo_stack:
+            return
+        
+        current = self.session.current
+        if current is None:
+            return
+        
+        redo_state = {
+            "index": self.session.current_index,
+            "action": current.action,
+            "placa_final": current.placa_final,
+            "skipped": current.skipped,
+            "veiculo_especial": current.veiculo_especial,
+            "classificacao": current.classificacao,
+        }
+        self._redo_stack.append(redo_state)
+        
+        state = self._undo_stack.pop()
+        self.session.go_to(state["index"])
+        
+        current = self.session.current
+        if current:
+            current.action = state["action"]
+            current.placa_final = state["placa_final"]
+            current.skipped = state["skipped"]
+            current.veiculo_especial = state["veiculo_especial"]
+            current.classificacao = state["classificacao"]
+        
+        self._refresh_view()
+
+    def _redo(self) -> None:
+        if not self._redo_stack:
+            return
+        
+        state = self._redo_stack.pop()
+        self.session.go_to(state["index"])
+        
+        current = self.session.current
+        if current:
+            current.action = state["action"]
+            current.placa_final = state["placa_final"]
+            current.skipped = state["skipped"]
+            current.veiculo_especial = state["veiculo_especial"]
+            current.classificacao = state["classificacao"]
+        
+        self._undo_stack.append(state)
+        self._refresh_view()
+
+    def _update_stats(self) -> None:
+        if not self._analysis_started or self.session.total == 0:
+            self.stats_label.config(text="")
+            return
+        
+        decided = self.session.decided_count
+        total = self.session.total
+        
+        if decided == 0:
+            self.stats_label.config(text="Aguardando decisões...")
+            return
+        
+        certas = sum(1 for d in self.session.decisions if d.action == Action.CERTA)
+        falhas = sum(1 for d in self.session.decisions if d.action == Action.ERRADA)
+        obstruidas = sum(1 for d in self.session.decisions if d.action == Action.OBSTRUCAO)
+        
+        elapsed = time.time() - self._stats_start_time
+        avg_time = elapsed / decided if decided > 0 else 0
+        remaining = (total - decided) * avg_time
+        
+        stats_text = f"✓{certas} ✗{falhas} ⊘{obstruidas} | "
+        if avg_time > 0:
+            stats_text += f"{avg_time:.1f}s/img | "
+            if remaining > 60:
+                stats_text += f"~{int(remaining/60)}min restantes"
+            else:
+                stats_text += f"~{int(remaining)}s restantes"
+        
+        self.stats_label.config(text=stats_text)
+
     def _start_analysis(self) -> None:
         if self._source_folder is None or self._output_folder is None:
             messagebox.showwarning(
@@ -580,6 +788,11 @@ class AnalisadorApp:
         self._analysis_started = True
         self.start_button.config(state=tk.DISABLED)
         self._set_review_enabled(True)
+        
+        self._stats_start_time = time.time()
+        self._decision_times.clear()
+        self._undo_stack.clear()
+        self._redo_stack.clear()
 
         if invalid_count:
             messagebox.showwarning(
@@ -589,6 +802,7 @@ class AnalisadorApp:
 
         self._clear_manual_entry()
         self._refresh_view()
+        self._try_load_session()
 
     def _clear_manual_entry(self) -> None:
         self.manual_entry.delete(0, tk.END)
@@ -789,6 +1003,8 @@ class AnalisadorApp:
             self._clear_manual_entry()
 
         self._refresh_image_list()
+        self._update_stats()
+
 
     def _preview_placa_for_certo(self, current) -> str | None:
         manual = self.manual_entry.get().strip()
@@ -1140,6 +1356,9 @@ class AnalisadorApp:
         return value
 
     def _finalize_decision(self, action: Action, placa_final: str) -> None:
+        self._save_state_for_undo()
+        
+        decision_start = time.time()
         veiculo_especial = self._veiculo_especial_for_action(action)
         self.session.set_decision(
             action,
@@ -1150,9 +1369,15 @@ class AnalisadorApp:
         self._clear_manual_entry()
         self._process_current_decision(action, placa_final)
 
+        decision_time = time.time() - decision_start
+        self._decision_times.append(decision_time)
+        if len(self._decision_times) > 100:
+            self._decision_times.pop(0)
+
         if self.session.current_index < self.session.total - 1:
             self.session.go_next()
 
+        self._auto_save_if_needed()
         self._refresh_view()
 
     def _process_current_decision(self, action: Action, placa_final: str) -> None:
@@ -1189,12 +1414,14 @@ class AnalisadorApp:
         if current is None:
             return
 
+        self._save_state_for_undo()
         self.session.skip_current()
         self._clear_manual_entry()
 
         if self.session.current_index < self.session.total - 1:
             self.session.go_next()
 
+        self._auto_save_if_needed()
         self._refresh_view()
 
     def _go_previous(self) -> None:
