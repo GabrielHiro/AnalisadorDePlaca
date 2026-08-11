@@ -40,6 +40,7 @@ class ParsedImage:
     periodo_folder: str
     valid: bool
     error: str | None = None
+    id_final: int = 0
 
 
 def normalize_stem(filename: str) -> str:
@@ -188,18 +189,12 @@ def validate_placa(placa: str) -> tuple[bool, str]:
 def resolve_placa_for_action(
     parsed: ParsedImage, action: Action, manual_placa: str | None = None
 ) -> tuple[str | None, str | None]:
-    if action == Action.CERTA:
+    if action in (Action.CERTA, Action.ERRADA):
         if manual_placa and manual_placa.strip():
             ok, result = validate_placa(manual_placa)
             if not ok:
                 return None, result
             return result, None
-        placa = parsed.placa_detectada.upper()
-        if not placa:
-            return None, "Placa detectada vazia."
-        return placa, None
-
-    if action == Action.ERRADA:
         placa = parsed.placa_detectada.upper()
         if not placa:
             return None, "Placa detectada vazia."
@@ -211,7 +206,12 @@ def resolve_placa_for_action(
     return None, "Acao invalida."
 
 
-def build_output_filename(parsed: ParsedImage, placa_final: str) -> str:
+def build_output_filename(
+    parsed: ParsedImage,
+    placa_final: str,
+    id_final: int | None = None,
+) -> str:
+    classificacao = parsed.id_final if id_final is None else id_final
     parts = [
         parsed.n_serie,
         parsed.faixa,
@@ -219,6 +219,7 @@ def build_output_filename(parsed: ParsedImage, placa_final: str) -> str:
         parsed.periodo,
         parsed.horario,
         placa_final.upper(),
+        str(classificacao),
     ]
     return "_".join(parts) + ".jpg"
 

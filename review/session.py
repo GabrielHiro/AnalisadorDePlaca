@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from parser.filename import Action, ParsedImage, parse_input_filename
+from parser.filename import Action, ParsedImage
+from parser.image_metadata import parse_input_image
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
@@ -22,7 +23,7 @@ def build_decisions(files: list[Path]) -> tuple[list[ReviewDecision], int]:
     invalid_count = 0
     
     for filepath in files:
-        parsed = parse_input_filename(filepath.name)
+        parsed = parse_input_image(filepath)
         if not parsed.valid:
             invalid_count += 1
         decisions.append(
@@ -43,6 +44,7 @@ class ReviewDecision:
     placa_final: str | None = None
     skipped: bool = False
     veiculo_especial: bool = False
+    classificacao: int | None = None
     output_path: Path | None = None
 
     @property
@@ -112,6 +114,7 @@ class ReviewSession:
         placa_final: str,
         *,
         veiculo_especial: bool = False,
+        classificacao: int | None = None,
     ) -> None:
         item = self.current
         if item is None:
@@ -119,6 +122,7 @@ class ReviewSession:
         item.action = action
         item.placa_final = placa_final
         item.veiculo_especial = veiculo_especial
+        item.classificacao = classificacao
         item.skipped = False
 
     def skip_current(self) -> None:
@@ -128,6 +132,7 @@ class ReviewSession:
         item.action = None
         item.placa_final = None
         item.veiculo_especial = False
+        item.classificacao = None
         item.skipped = True
 
     def get_reviewable(self) -> list[ReviewDecision]:

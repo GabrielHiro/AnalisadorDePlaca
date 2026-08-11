@@ -115,6 +115,23 @@ build_exe.bat
 make build
 ```
 
+Para gerar `.exe` em Windows nativo:
+
+```bat
+make build-win
+```
+
+Para cross-compile no Linux (WSL/Ubuntu) usando Docker/Wine:
+
+```bash
+make build-win-cross
+```
+
+Pre-requisitos do cross-compile:
+
+- Docker instalado e em execucao
+- Acesso a internet para baixar a imagem `cdrx/pyinstaller-windows:python3`
+
 Se `python` funcionar no seu terminal:
 
 ```bat
@@ -129,6 +146,12 @@ python -m PyInstaller --noconfirm --clean AnalisadorDePlacas.spec
 
 ```text
 dist\AnalisadorDePlacas.exe
+```
+
+No cross-compile, o resultado e gerado em:
+
+```text
+dist/windows/AnalisadorDePlacas.exe
 ```
 
 Copie o `.exe` para onde quiser e execute com duplo clique. Na primeira abertura o Windows pode pedir confirmacao (SmartScreen).

@@ -3,3 +3,5 @@ dist/
 *.spec.bak
 __pycache__/
 *.pyc
+*.jpg
+*.exe

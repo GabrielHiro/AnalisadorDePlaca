@@ -48,7 +48,16 @@ def build_target_path(
         corrected=corrected,
         veiculo_especial=veiculo_especial,
     )
-    filename = build_output_filename(parsed, decision.placa_final)
+    classificacao = (
+        decision.classificacao
+        if decision.classificacao is not None
+        else parsed.id_final
+    )
+    filename = build_output_filename(
+        parsed,
+        decision.placa_final,
+        id_final=classificacao,
+    )
     return (
         output_root
         / parsed.n_serie

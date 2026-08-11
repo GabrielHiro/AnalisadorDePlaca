@@ -1,20 +1,39 @@
 from __future__ import annotations
 
+import json
 import threading
-import tkinter as tk
+import time
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 
-from PIL import Image, ImageTk
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+except ImportError:  # pragma: no cover - ambiente sem Tkinter
+    tk = None
+    filedialog = None
+    messagebox = None
+    ttk = None
+
+from PIL import Image, ImageDraw, ImageFont
+
+try:
+    from PIL import ImageTk
+except ImportError:  # pragma: no cover - fallback para ambientes sem Tkinter
+    ImageTk = None
 
 from organizer.folders import build_analysis_summary, organize_single, write_report
 from parser.filename import (
     Action,
     build_output_filename,
     format_horario_display,
-    parse_input_filename,
     resolve_placa_for_action,
     validate_placa,
+)
+from parser.image_metadata import (
+    CLASSIFICACAO_BY_ID,
+    classificacao_option_label,
+    format_classificacao,
+    parse_input_image,
 )
 from review.session import ReviewDecision, ReviewSession, build_decisions, scan_image_files
 
@@ -24,7 +43,9 @@ class AnalisadorApp:
     ZOOM_MAX = 4.0
     ZOOM_STEP = 1.1
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: object) -> None:
+        if tk is None or ttk is None or filedialog is None or messagebox is None:
+            raise RuntimeError("Tkinter não está disponível neste ambiente.")
         self.root = root
         self.root.title("Analisador de Placas")
         self.root.geometry("1280x760")
@@ -41,9 +62,23 @@ class AnalisadorApp:
         self._source_folder: Path | None = None
         self._output_folder: Path | None = None
         self._updating_list = False
+        self._overlay_text = ""
+        self._overlay_font_size = 32
+        self._overlay_opacity = 0.82
+        self._overlay_position = (0.12, 0.10)
+        self._overlay_photo: ImageTk.PhotoImage | None = None
+        self._overlay_drag_data: dict[str, float] | None = None
+        self._auto_save_counter = 0
+        self._last_save_time = 0
+        self._undo_stack: list[dict] = []
+        self._redo_stack: list[dict] = []
+        self._stats_start_time = time.time()
+        self._decision_times: list[float] = []
 
         self._build_ui()
+        self._setup_keyboard_shortcuts()
         self._refresh_view()
+        self._try_load_session()
 
     def _build_ui(self) -> None:
         setup_frame = ttk.LabelFrame(self.root, text="Configuração inicial", padding=8)
@@ -125,6 +160,11 @@ class AnalisadorApp:
         )
         self.finish_button.pack(side=tk.RIGHT)
 
+        stats_frame = ttk.Frame(toolbar)
+        stats_frame.pack(side=tk.RIGHT, padx=(16, 0))
+        self.stats_label = ttk.Label(stats_frame, text="", foreground="#666")
+        self.stats_label.pack(side=tk.LEFT)
+
         content = ttk.Frame(self.root, padding=8)
         content.pack(fill=tk.BOTH, expand=True)
         self.content_frame = content
@@ -175,11 +215,47 @@ class AnalisadorApp:
             highlightthickness=0,
             bg="#1e1e1e",
         )
+        self.overlay_controls = ttk.Frame(self.image_frame)
+        self.overlay_controls.pack(fill=tk.X, pady=(0, 6))
+
+        self.overlay_size_var = tk.IntVar(value=self._overlay_font_size)
+        self.overlay_opacity_var = tk.DoubleVar(value=self._overlay_opacity)
+
+        ttk.Label(self.overlay_controls, text="Overlay").pack(side=tk.LEFT)
+        ttk.Label(self.overlay_controls, text="Tamanho").pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Scale(
+            self.overlay_controls,
+            from_=16,
+            to=72,
+            variable=self.overlay_size_var,
+            orient=tk.HORIZONTAL,
+            length=120,
+            command=lambda _value: self._update_overlay_from_controls(),
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(self.overlay_controls, text="Opacidade").pack(side=tk.LEFT)
+        ttk.Scale(
+            self.overlay_controls,
+            from_=0.2,
+            to=1.0,
+            variable=self.overlay_opacity_var,
+            orient=tk.HORIZONTAL,
+            length=120,
+            command=lambda _value: self._update_overlay_from_controls(),
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            self.overlay_controls,
+            text="Resetar posição",
+            command=self._reset_overlay_position,
+        ).pack(side=tk.RIGHT)
+
         self.image_canvas.pack(fill=tk.BOTH, expand=True)
         self.image_canvas.bind("<MouseWheel>", self._on_image_wheel)
         self.image_canvas.bind("<ButtonPress-1>", self._on_image_drag_start)
         self.image_canvas.bind("<B1-Motion>", self._on_image_drag_move)
         self.image_canvas.bind("<ButtonRelease-1>", self._on_image_drag_end)
+        self.image_canvas.tag_bind("overlay", "<ButtonPress-1>", self._on_overlay_drag_start)
+        self.image_canvas.tag_bind("overlay", "<B1-Motion>", self._on_overlay_drag_move)
+        self.image_canvas.tag_bind("overlay", "<ButtonRelease-1>", self._on_overlay_drag_end)
         self.image_frame.bind("<Configure>", self._on_image_frame_resize)
 
         side = ttk.Frame(content, padding=(8, 0, 0, 0), width=320)
@@ -218,6 +294,24 @@ class AnalisadorApp:
         )
         self.veiculo_especial_check.pack(fill=tk.X, pady=2)
 
+        classif_frame = ttk.Frame(actions_frame)
+        classif_frame.pack(fill=tk.X, pady=(6, 2))
+        ttk.Label(classif_frame, text="Classificação:").pack(anchor=tk.W)
+        self.classificacao_var = tk.StringVar()
+        self.classificacao_combo = ttk.Combobox(
+            classif_frame,
+            textvariable=self.classificacao_var,
+            state="readonly",
+            values=[
+                classificacao_option_label(cid) for cid in CLASSIFICACAO_BY_ID
+            ],
+        )
+        self.classificacao_combo.pack(fill=tk.X, pady=(2, 0))
+        self.classificacao_combo.set(classificacao_option_label(0))
+        self.classificacao_combo.bind(
+            "<<ComboboxSelected>>", self._update_output_preview
+        )
+
         manual_frame = ttk.LabelFrame(
             actions_frame,
             text="Placa correta (opcional)",
@@ -227,7 +321,7 @@ class AnalisadorApp:
 
         ttk.Label(
             manual_frame,
-            text="Preencha se corrigiu a placa. Vazio = já veio certa.",
+            text="Preencha se corrigiu a placa (Certo ou Falha técnica). Vazio = usa a detectada.",
             wraplength=280,
             foreground="#555",
         ).pack(anchor=tk.W, pady=(0, 4))
@@ -309,6 +403,7 @@ class AnalisadorApp:
             ("periodo", "Período"),
             ("horario", "Horário"),
             ("placa", "Placa detectada"),
+            ("classificacao", "Classificação"),
             ("nome_saida", "Nome de saída"),
             ("decisao", "Decisão atual"),
         ]:
@@ -326,6 +421,15 @@ class AnalisadorApp:
             wraplength=260,
         )
         self.warning_label.pack(fill=tk.X, pady=(8, 0))
+
+        shortcuts_frame = ttk.LabelFrame(meta_inner, text="Atalhos", padding=8)
+        shortcuts_frame.pack(fill=tk.X, pady=(8, 0))
+        shortcuts_text = (
+            "C/Enter: Certo  |  F: Falha  |  O: Obstrução\n"
+            "S: Pular  |  V: Veículo Especial  |  ←→: Navegar\n"
+            "1-9: Classificação  |  Ctrl+Z: Desfazer  |  Ctrl+S: Salvar"
+        )
+        ttk.Label(shortcuts_frame, text=shortcuts_text, foreground="#555", font=("Segoe UI", 8)).pack()
 
         self._set_review_enabled(False)
 
@@ -416,7 +520,7 @@ class AnalisadorApp:
                 invalid_count = 0
 
                 for i, filepath in enumerate(files):
-                    parsed = parse_input_filename(filepath.name)
+                    parsed = parse_input_image(filepath)
                     if not parsed.valid:
                         invalid_count += 1
 
@@ -569,6 +673,9 @@ class AnalisadorApp:
             self.skip_button,
         ):
             widget.config(state=state)
+        self.classificacao_combo.config(
+            state="readonly" if enabled else tk.DISABLED
+        )
         if not enabled:
             self.finish_button.config(state=tk.DISABLED)
         else:
@@ -605,6 +712,7 @@ class AnalisadorApp:
             self._set_action_state(tk.DISABLED)
             return
 
+        self._refresh_overlay_text(current)
         self._show_image(current.filepath)
         parsed = current.parsed
 
@@ -633,6 +741,15 @@ class AnalisadorApp:
         else:
             self.veiculo_especial_var.set(False)
 
+        selected_id = (
+            current.classificacao
+            if current.classificacao is not None
+            else parsed.id_final
+        )
+        if selected_id not in CLASSIFICACAO_BY_ID:
+            selected_id = 0
+        self.classificacao_var.set(classificacao_option_label(selected_id))
+
         self.meta_labels["arquivo"].config(text=current.filepath.name)
         self.meta_labels["equipamento"].config(text=parsed.n_serie or "-")
         self.meta_labels["faixa"].config(text=parsed.faixa or "-")
@@ -642,6 +759,9 @@ class AnalisadorApp:
             text=format_horario_display(parsed.horario) if parsed.horario else "-"
         )
         self.meta_labels["placa"].config(text=parsed.placa_detectada or "-")
+        self.meta_labels["classificacao"].config(
+            text=format_classificacao(parsed.id_final)
+        )
         self.meta_labels["nome_saida"].config(
             text=self._current_output_name(current) or "-"
         )
@@ -681,14 +801,24 @@ class AnalisadorApp:
             return None
         return placa_final
 
+    def _id_final_for_output(self, current) -> int:
+        if current.classificacao is not None:
+            return current.classificacao
+        return self._selected_classificacao()
+
     def _current_output_name(self, current) -> str | None:
+        id_final = self._id_final_for_output(current)
         if current.placa_final:
-            return build_output_filename(current.parsed, current.placa_final)
+            return build_output_filename(
+                current.parsed, current.placa_final, id_final=id_final
+            )
 
         if current.parsed.valid:
             placa = self._preview_placa_for_certo(current)
             if placa:
-                return build_output_filename(current.parsed, placa)
+                return build_output_filename(
+                    current.parsed, placa, id_final=id_final
+                )
         return None
 
     def _update_output_preview(self, _event=None) -> None:
@@ -697,6 +827,7 @@ class AnalisadorApp:
             return
         preview = self._current_output_name(current)
         self.meta_labels["nome_saida"].config(text=preview or "-")
+        self._refresh_overlay_text(self.session.current)
 
     def _set_action_state(self, state: str) -> None:
         if not self._analysis_started:
@@ -704,6 +835,9 @@ class AnalisadorApp:
         self.certa_button.config(state=state)
         self.errada_button.config(state=state)
         self.veiculo_especial_check.config(state=state)
+        self.classificacao_combo.config(
+            state="readonly" if state == tk.NORMAL else tk.DISABLED
+        )
         self.obstrucao_button.config(state=state)
         self.manual_entry.config(state=state)
 
@@ -714,11 +848,113 @@ class AnalisadorApp:
         self._pan_x = 0
         self._pan_y = 0
         self._drag_data = None
+        self._overlay_photo = None
         self.image_canvas.delete("all")
         self._update_zoom_label()
 
     def _update_zoom_label(self) -> None:
         self.zoom_label.config(text=f"{int(self._zoom_level * 100)}%")
+
+    def _build_overlay_text(self, placa: str, classificacao: str) -> str:
+        return f"PLACA: {placa or '-'}\nClassificação: {classificacao or '-'}"
+
+    def _refresh_overlay_text(self, current) -> None:
+        if current is None:
+            self._overlay_text = ""
+            self._render_overlay()
+            return
+
+        parsed = current.parsed
+        selected_id = (
+            current.classificacao
+            if current.classificacao is not None
+            else self._selected_classificacao()
+        )
+        if selected_id not in CLASSIFICACAO_BY_ID:
+            selected_id = 0
+
+        self._overlay_text = self._build_overlay_text(
+            parsed.placa_detectada or "-",
+            format_classificacao(selected_id),
+        )
+        self._render_overlay()
+
+    def _update_overlay_from_controls(self) -> None:
+        self._overlay_font_size = max(16, int(self.overlay_size_var.get()))
+        self._overlay_opacity = max(0.2, min(1.0, float(self.overlay_opacity_var.get())))
+        if self._current_pil_image is not None:
+            self._render_image()
+        else:
+            self._render_overlay()
+
+    def _reset_overlay_position(self) -> None:
+        self._overlay_position = (0.12, 0.10)
+        self._render_image()
+
+    def _load_overlay_font(self, font_size: int) -> ImageFont.ImageFont:
+        for candidate in ("DejaVuSans-Bold.ttf", "arial.ttf", "Arial.ttf"):
+            try:
+                return ImageFont.truetype(candidate, font_size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def _render_overlay(self) -> None:
+        self.image_canvas.delete("overlay")
+        if self._current_pil_image is None or not self._overlay_text:
+            self._overlay_photo = None
+            return
+
+        canvas_w = max(1, self.image_canvas.winfo_width())
+        canvas_h = max(1, self.image_canvas.winfo_height())
+        font_size = max(16, self._overlay_font_size)
+        font = self._load_overlay_font(font_size)
+
+        lines = [line.strip() for line in self._overlay_text.splitlines() if line.strip()]
+        if not lines:
+            self._overlay_photo = None
+            return
+
+        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(dummy)
+        line_widths = []
+        line_heights = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_widths.append(bbox[2] - bbox[0])
+            line_heights.append(bbox[3] - bbox[1])
+
+        text_width = max(line_widths) if line_widths else 1
+        text_height = sum(line_heights) + max(8, font_size // 3) * (len(lines) - 1)
+        padding_x = max(18, int(canvas_w * 0.03))
+        padding_y = max(16, int(canvas_h * 0.03))
+        box_w = text_width + padding_x * 2
+        box_h = text_height + padding_y * 2
+
+        overlay = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+        panel_draw = ImageDraw.Draw(overlay)
+        panel_draw.rounded_rectangle(
+            [(0, 0), (box_w - 1, box_h - 1)],
+            radius=max(16, font_size // 2),
+            fill=(0, 0, 0, int(160 * self._overlay_opacity)),
+            outline=(255, 255, 255, int(60 * self._overlay_opacity)),
+        )
+
+        y = padding_y
+        for line in lines:
+            bbox = panel_draw.textbbox((0, 0), line, font=font)
+            line_width = bbox[2] - bbox[0]
+            line_height = bbox[3] - bbox[1]
+            panel_draw.text((padding_x + 2, y + 2), line, font=font, fill=(0, 0, 0, 180))
+            panel_draw.text((padding_x, y), line, font=font, fill=(255, 255, 255, 255))
+            y += line_height + max(8, font_size // 3)
+
+        self._overlay_photo = ImageTk.PhotoImage(overlay)
+        x = int(self._overlay_position[0] * canvas_w)
+        y = int(self._overlay_position[1] * canvas_h)
+        x = max(0, min(canvas_w - overlay.width, x))
+        y = max(0, min(canvas_h - overlay.height, y))
+        self.image_canvas.create_image(x, y, image=self._overlay_photo, anchor="nw", tags=("overlay",))
 
     def _zoom_in(self) -> None:
         if self._current_pil_image is None:
@@ -758,6 +994,8 @@ class AnalisadorApp:
     def _on_image_drag_start(self, event) -> None:
         if self._current_pil_image is None or self._zoom_level <= 1.0:
             return
+        if self.image_canvas.find_withtag("current") and "overlay" in self.image_canvas.gettags("current"):
+            return
         self._drag_data = {"x": event.x, "y": event.y}
 
     def _on_image_drag_move(self, event) -> None:
@@ -770,6 +1008,29 @@ class AnalisadorApp:
 
     def _on_image_drag_end(self, _event) -> None:
         self._drag_data = None
+
+    def _on_overlay_drag_start(self, event) -> None:
+        self._overlay_drag_data = {
+            "x": event.x,
+            "y": event.y,
+            "px": self._overlay_position[0],
+            "py": self._overlay_position[1],
+        }
+
+    def _on_overlay_drag_move(self, event) -> None:
+        if self._overlay_drag_data is None:
+            return
+        canvas_w = max(1, self.image_canvas.winfo_width())
+        canvas_h = max(1, self.image_canvas.winfo_height())
+        delta_x = (event.x - self._overlay_drag_data["x"]) / canvas_w
+        delta_y = (event.y - self._overlay_drag_data["y"]) / canvas_h
+        x = self._overlay_drag_data["px"] + delta_x
+        y = self._overlay_drag_data["py"] + delta_y
+        self._overlay_position = (max(0.0, min(1.0, x)), max(0.0, min(1.0, y)))
+        self._render_overlay()
+
+    def _on_overlay_drag_end(self, _event) -> None:
+        self._overlay_drag_data = None
 
     def _on_image_frame_resize(self, _event) -> None:
         if self._current_pil_image is not None:
@@ -801,6 +1062,7 @@ class AnalisadorApp:
         x = canvas_w // 2 + self._pan_x
         y = canvas_h // 2 + self._pan_y
         self.image_canvas.create_image(x, y, image=self._photo, anchor=tk.CENTER)
+        self._render_overlay()
         self._update_zoom_label()
 
     def _show_image(self, filepath: Path) -> None:
@@ -850,7 +1112,12 @@ class AnalisadorApp:
         if current is None or not current.parsed.valid:
             return
 
-        placa_final, error = resolve_placa_for_action(current.parsed, action)
+        manual_placa = self.manual_entry.get().strip() or None
+        placa_final, error = resolve_placa_for_action(
+            current.parsed,
+            action,
+            manual_placa,
+        )
         if error or placa_final is None:
             messagebox.showerror("Erro", error or "Nao foi possivel aplicar a acao.")
             return
@@ -862,12 +1129,23 @@ class AnalisadorApp:
             return False
         return self.veiculo_especial_var.get()
 
+    def _selected_classificacao(self) -> int:
+        raw = self.classificacao_var.get().split("-", 1)[0].strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            return 0
+        if value not in CLASSIFICACAO_BY_ID:
+            return 0
+        return value
+
     def _finalize_decision(self, action: Action, placa_final: str) -> None:
         veiculo_especial = self._veiculo_especial_for_action(action)
         self.session.set_decision(
             action,
             placa_final,
             veiculo_especial=veiculo_especial,
+            classificacao=self._selected_classificacao(),
         )
         self._clear_manual_entry()
         self._process_current_decision(action, placa_final)
@@ -887,6 +1165,7 @@ class AnalisadorApp:
             current.action = None
             current.placa_final = None
             current.veiculo_especial = False
+            current.classificacao = None
             messagebox.showerror(
                 "Erro ao copiar",
                 error or "Nao foi possivel copiar a imagem.",
@@ -963,6 +1242,9 @@ class AnalisadorApp:
 
 
 def run_app() -> None:
+    if tk is None or ttk is None or filedialog is None or messagebox is None:
+        raise RuntimeError("Tkinter não está disponível neste ambiente.")
+
     root = tk.Tk()
     AnalisadorApp(root)
     root.mainloop()
